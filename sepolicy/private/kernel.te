@@ -1,7 +1,22 @@
 # KSU systemless-modules overlay: the kernel loop-mounts
-# /data/adb/overlayfs/overlayfs.img (labeled adb_data_file). Without this the
-# image-backed mount is denied (avc kernel:s0 -> adb_data_file read) and EXT4
-# can't read the superblock; the mount then falls back, so this only silences
-# the denial. adb_data_file is a public type; kernel is a coredomain, so this
-# lives in system_ext/private (plat-side) rather than vendor sepolicy.
-allow kernel adb_data_file:file read;
+# /data/adb/overlayfs/overlayfs.img (labeled adb_data_file), so the loop worker
+# thread does both the reads AND the writes for that image from the kernel
+# domain. adb_data_file is a public type; kernel is a coredomain, so this lives
+# in system_ext/private (plat-side) rather than vendor sepolicy.
+#
+# This was `:file read` only. That is enough to mount the image but not to write
+# it back, and a refused writeback cannot be reported as "SELinux said no" by the
+# loop driver -- it surfaces as a block error on perfectly healthy flash, then
+# takes the image's journal down with it. Proven on sunfish, which carried the
+# identical read-only rule:
+#
+#   avc: denied { write } for path="/data/adb/overlayfs/overlayfs.img"
+#     scontext=u:r:kernel:s0 tcontext=u:object_r:adb_data_file:s0 tclass=file
+#   loop: Write error at byte offset 2015371264, length 4096.
+#   print_req_error: I/O error, dev loop43, sector 3936272
+#   JBD2: Error -5 detected when updating journal superblock for loop43-8.
+#   Aborting journal on device loop43-8.
+#
+# An aborted journal remounts the overlay read-only, so systemless module changes
+# silently stop persisting for the rest of the boot.
+allow kernel adb_data_file:file rw_file_perms;
